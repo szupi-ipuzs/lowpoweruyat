@@ -221,13 +221,39 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
       }
       else if (this->wifi_status_ == LPUyatNetworkStatus::WIFI_CONFIGURED)
       {
-        this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONNECTED;
-        this->send_wifi_status_with_timeout_(100);
+        this->set_interval("wifi_status", 100, [this] {
+          if (LPUyatInitState::INIT_WIFI == this->init_state_)
+          {
+            if (esphome::network::is_connected())
+            {
+              this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONNECTED;
+              this->send_wifi_status_(static_cast<uint8_t>(this->wifi_status_));
+              this->cancel_interval("wifi_status");
+            }
+          }
+          else
+          {
+            this->cancel_interval("wifi_status");
+          }
+        });
       }
       else if (this->wifi_status_ == LPUyatNetworkStatus::WIFI_CONNECTED)
       {
-        this->wifi_status_ = LPUyatNetworkStatus::CLOUD_CONNECTED;
-        this->send_wifi_status_with_timeout_(1000);
+        this->set_interval("wifi_status", 100, [this] {
+          if (LPUyatInitState::INIT_WIFI == this->init_state_)
+          {
+            if (esphome::remote_is_connected())
+            {
+              this->wifi_status_ = LPUyatNetworkStatus::CLOUD_CONNECTED;
+              this->send_wifi_status_(static_cast<uint8_t>(this->wifi_status_));
+              this->cancel_interval("wifi_status");
+            }
+          }
+          else
+          {
+            this->cancel_interval("wifi_status");
+          }
+        });
       }
       else if (this->wifi_status_ == LPUyatNetworkStatus::CLOUD_CONNECTED)
       {
