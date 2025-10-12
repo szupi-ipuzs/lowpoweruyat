@@ -117,6 +117,8 @@ class LPUyat : public Component, public uart::UARTDevice {
     this->initialized_callback_.add(std::move(callback));
   }
 
+  void set_dp_ack_delay(uint32_t delay_ms) { this->dp_ack_delay_ms_ = delay_ms; }
+
  protected:
   void handle_input_buffer_();
   void handle_datapoints_(const uint8_t *buffer, size_t len);
@@ -163,6 +165,7 @@ class LPUyat : public Component, public uart::UARTDevice {
   optional<LPUyatCommandType> expected_response_{};
   CallbackManager<void()> initialized_callback_{};
   LPUyatNetworkStatus wifi_status_{LPUyatNetworkStatus::SMARTCONFIG};
+  uint32_t dp_ack_delay_ms_ = 200;
 };
 
 }  // namespace lpuyat

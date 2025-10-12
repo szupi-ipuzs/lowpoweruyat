@@ -303,7 +303,7 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
     }
     this->handle_datapoints_(buffer, len);
     // delay the response to increase chances of publishing the values before mcu cuts the power
-    this->set_timeout("datapoint_ack", 200, [this] {
+    this->set_timeout("datapoint_ack", dp_ack_delay_ms_, [this] {
         this->send_command_(
             LPUyatCommand{.cmd = LPUyatCommandType::DATAPOINT_REALTIME_REPORT,
                         .payload = std::vector<uint8_t>{0x00}});
@@ -329,7 +329,7 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
     }
     this->handle_datapoints_(buffer, len);
     // delay the response to increase chances of publishing the values before mcu cuts the power
-    this->set_timeout("datapoint_ack", 200, [this] {
+    this->set_timeout("datapoint_ack", dp_ack_delay_ms_, [this] {
         this->send_command_(
             LPUyatCommand{.cmd = LPUyatCommandType::DATAPOINT_RECORDED_REPORT,
                         .payload = std::vector<uint8_t>{0x00}});

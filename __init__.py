@@ -13,6 +13,7 @@ CONF_IGNORE_MCU_UPDATE_ON_DATAPOINTS = "ignore_mcu_update_on_datapoints"
 CONF_ON_DATAPOINT_UPDATE = "on_datapoint_update"
 CONF_DATAPOINT_TYPE = "datapoint_type"
 CONF_STATUS_PIN = "status_pin"
+CONF_DP_ACK_DELAY = "dp_ack_delay"
 
 lpuyat_ns = cg.esphome_ns.namespace("lpuyat")
 LPUyatDatapointType = lpuyat_ns.enum("LPUyatDatapointType")
@@ -104,6 +105,7 @@ CONFIG_SCHEMA = (
                 },
                 extra_validators=assign_declare_id,
             ),
+            cv.Optional(CONF_DP_ACK_DELAY, default=1000): cv.positive_time_period_milliseconds,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -131,3 +133,5 @@ async def to_code(config):
         await automation.build_automation(
             trigger, [(DATAPOINT_TYPES[conf[CONF_DATAPOINT_TYPE]], "x")], conf
         )
+    if CONF_DP_ACK_DELAY in config:
+        cg.add(var.set_dp_ack_delay(config[CONF_DP_ACK_DELAY]))
