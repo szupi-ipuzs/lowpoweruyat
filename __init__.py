@@ -12,8 +12,8 @@ CONF_IGNORE_MCU_UPDATE_ON_DATAPOINTS = "ignore_mcu_update_on_datapoints"
 
 CONF_ON_DATAPOINT_UPDATE = "on_datapoint_update"
 CONF_DATAPOINT_TYPE = "datapoint_type"
-CONF_STATUS_PIN = "status_pin"
 CONF_DP_ACK_DELAY = "dp_ack_delay"
+CONF_PAIR_ACK_DELAY = "pair_ack_delay"
 
 lpuyat_ns = cg.esphome_ns.namespace("lpuyat")
 LPUyatDatapointType = lpuyat_ns.enum("LPUyatDatapointType")
@@ -92,7 +92,6 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_IGNORE_MCU_UPDATE_ON_DATAPOINTS): cv.ensure_list(
                 cv.uint8_t
             ),
-            cv.Optional(CONF_STATUS_PIN): pins.gpio_output_pin_schema,
             cv.Optional(CONF_ON_DATAPOINT_UPDATE): automation.validate_automation(
                 {
                     cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(
@@ -105,7 +104,8 @@ CONFIG_SCHEMA = (
                 },
                 extra_validators=assign_declare_id,
             ),
-            cv.Optional(CONF_DP_ACK_DELAY, default=1000): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_DP_ACK_DELAY, default="1000ms"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_PAIR_ACK_DELAY, default="30s"): cv.positive_time_period_milliseconds,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -120,9 +120,6 @@ async def to_code(config):
     if CONF_TIME_ID in config:
         time_ = await cg.get_variable(config[CONF_TIME_ID])
         cg.add(var.set_time_id(time_))
-    if CONF_STATUS_PIN in config:
-        status_pin_ = await cg.gpio_pin_expression(config[CONF_STATUS_PIN])
-        cg.add(var.set_status_pin(status_pin_))
     if CONF_IGNORE_MCU_UPDATE_ON_DATAPOINTS in config:
         for dp in config[CONF_IGNORE_MCU_UPDATE_ON_DATAPOINTS]:
             cg.add(var.add_ignore_mcu_update_on_datapoints(dp))
@@ -135,3 +132,5 @@ async def to_code(config):
         )
     if CONF_DP_ACK_DELAY in config:
         cg.add(var.set_dp_ack_delay(config[CONF_DP_ACK_DELAY]))
+    if CONF_PAIR_ACK_DELAY in config:
+        cg.add(var.set_pairing_delay(config[CONF_PAIR_ACK_DELAY]))

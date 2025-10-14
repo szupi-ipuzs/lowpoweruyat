@@ -30,14 +30,8 @@ void LPUyat::query_product_info_with_retries_()
 }
 
 void LPUyat::setup() {
-  // this->set_interval("heartbeat", 10000, [this] {
-  //   this->send_empty_command_(LPUyatCommandType::HEARTBEAT);
-  // });
-
   this->query_product_info_with_retries_();
-  if (this->status_pin_ != nullptr) {
-    this->status_pin_->digital_write(false);
-  }
+  this->dump_config();
 }
 
 void LPUyat::loop() {
@@ -62,51 +56,28 @@ void LPUyat::loop() {
 }
 
 void LPUyat::dump_config() {
-  this->cancel_timeout("datapoint_dump");
+  this->cancel_timeout("dump_config");
   ESP_LOGCONFIG(TAG, "LPUyat:");
-  if (this->init_state_ != LPUyatInitState::INIT_DONE) {
-    if (this->init_failed_) {
-      ESP_LOGCONFIG(TAG, "  Initialization failed. Current init_state: %u",
-                    static_cast<uint8_t>(this->init_state_));
-    } else {
-      ESP_LOGCONFIG(TAG,
-                    "  Configuration will be reported when setup is complete. "
-                    "Current init_state: %u",
-                    static_cast<uint8_t>(this->init_state_));
-    }
-    ESP_LOGCONFIG(TAG, "  If no further output is received, confirm that this "
-                       "is a supported LPUyat device.");
-    return;
-  }
-  for (auto &info : this->datapoints_) {
+  ESP_LOGCONFIG(TAG, "  Pairing delay: %ums", this->pairing_delay_ms_);
+  ESP_LOGCONFIG(TAG, "  DP ack delay: %ums", this->dp_ack_delay_ms_);
+  ESP_LOGCONFIG(TAG, "Datapoints: %zu", this->datapoints_.size());
+  for (const auto &info : this->datapoints_) {
     if (info.type == LPUyatDatapointType::RAW) {
-      ESP_LOGCONFIG(TAG, "  Datapoint %u: raw (value: %s)", info.id,
-                    format_hex_pretty(info.value_raw).c_str());
+      ESP_LOGCONFIG(TAG, "  Datapoint %u: raw", info.id);
     } else if (info.type == LPUyatDatapointType::BOOLEAN) {
-      ESP_LOGCONFIG(TAG, "  Datapoint %u: switch (value: %s)", info.id,
-                    ONOFF(info.value_bool));
+      ESP_LOGCONFIG(TAG, "  Datapoint %u: switch", info.id);
     } else if (info.type == LPUyatDatapointType::INTEGER) {
-      ESP_LOGCONFIG(TAG, "  Datapoint %u: int value (value: %d)", info.id,
-                    info.value_int);
+      ESP_LOGCONFIG(TAG, "  Datapoint %u: int value", info.id);
     } else if (info.type == LPUyatDatapointType::STRING) {
-      ESP_LOGCONFIG(TAG, "  Datapoint %u: string value (value: %s)", info.id,
-                    info.value_string.c_str());
+      ESP_LOGCONFIG(TAG, "  Datapoint %u: string value", info.id);
     } else if (info.type == LPUyatDatapointType::ENUM) {
-      ESP_LOGCONFIG(TAG, "  Datapoint %u: enum (value: %d)", info.id,
-                    info.value_enum);
+      ESP_LOGCONFIG(TAG, "  Datapoint %u: enum", info.id);
     } else if (info.type == LPUyatDatapointType::BITMASK) {
-      ESP_LOGCONFIG(TAG, "  Datapoint %u: bitmask (value: %" PRIx32 ")",
-                    info.id, info.value_bitmask);
+      ESP_LOGCONFIG(TAG, "  Datapoint %u: bitmask");
     } else {
       ESP_LOGCONFIG(TAG, "  Datapoint %u: unknown", info.id);
     }
   }
-  if ((this->status_pin_reported_ != -1) || (this->reset_pin_reported_ != -1)) {
-    ESP_LOGCONFIG(TAG, "  GPIO Configuration: status: pin %d, reset: pin %d",
-                  this->status_pin_reported_, this->reset_pin_reported_);
-  }
-  LOG_PIN("  Status Pin: ", this->status_pin_);
-  ESP_LOGCONFIG(TAG, "  Product: '%s'", this->product_.c_str());
 }
 
 std::size_t LPUyat::validate_message_() {
@@ -205,6 +176,9 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
     } else {
       this->product_ = R"({"p":"INVALID"})";
     }
+
+    ESP_LOGI(TAG, "  Product: '%s'", this->product_.c_str());
+
     if (this->init_state_ == LPUyatInitState::INIT_PRODUCT) {
       this->init_state_ = LPUyatInitState::INIT_WIFI;
       this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONFIGURED;
@@ -239,7 +213,8 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
       }
       else if (this->wifi_status_ == LPUyatNetworkStatus::WIFI_CONNECTED)
       {
-        this->set_interval("wifi_status", 100, [this] {
+        ESP_LOGI(TAG, "Delaying %ums before reporting cloud connection...", this->cloud_ack_delay_ms_);
+        this->set_interval("wifi_status", this->cloud_ack_delay_ms_, [this] {
           if (LPUyatInitState::INIT_WIFI == this->init_state_)
           {
             if (esphome::remote_is_connected())
@@ -258,8 +233,6 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
       else if (this->wifi_status_ == LPUyatNetworkStatus::CLOUD_CONNECTED)
       {
         this->init_state_ = LPUyatInitState::INIT_DATAPOINT;
-        this->set_timeout("datapoint_dump", 1000,
-                          [this] { this->dump_config(); });
         this->initialized_callback_.call();
       }
     }
@@ -269,6 +242,7 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
     this->send_empty_command_(LPUyatCommandType::WIFI_RESET);
     this->init_state_ = LPUyatInitState::INIT_WIFI;
     this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONFIGURED;
+    this->cloud_ack_delay_ms_ = this->pairing_delay_ms_;
     this->send_wifi_status_with_timeout_(100);
     break;
   case LPUyatCommandType::WIFI_SELECT:
@@ -276,6 +250,7 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
     this->send_empty_command_(LPUyatCommandType::WIFI_SELECT);
     this->init_state_ = LPUyatInitState::INIT_WIFI;
     this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONFIGURED;
+    this->cloud_ack_delay_ms_ = this->pairing_delay_ms_;
     if (len > 0)
     {
       if (buffer[0] == 0x00)
@@ -297,17 +272,19 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
   case LPUyatCommandType::DATAPOINT_REALTIME_REPORT:
     if (this->init_state_ == LPUyatInitState::INIT_DATAPOINT) {
       this->init_state_ = LPUyatInitState::INIT_DONE;
-      this->set_timeout("datapoint_dump", 1000,
-                        [this] { this->dump_config(); });
       this->initialized_callback_.call();
     }
     this->handle_datapoints_(buffer, len);
-    // delay the response to increase chances of publishing the values before mcu cuts the power
-    this->set_timeout("datapoint_ack", dp_ack_delay_ms_, [this] {
-        this->send_command_(
-            LPUyatCommand{.cmd = LPUyatCommandType::DATAPOINT_REALTIME_REPORT,
-                        .payload = std::vector<uint8_t>{0x00}});
-      });
+    // only ack if we actualy reported connecting to cloud already
+    // otherwise the mcu will treat this answer as "we are connected to cloud"
+    if (this->init_state_ > LPUyatInitState::INIT_WIFI)
+    {
+      this->set_timeout("datapoint_ack", dp_ack_delay_ms_, [this] {
+          this->send_command_(
+              LPUyatCommand{.cmd = LPUyatCommandType::DATAPOINT_REALTIME_REPORT,
+                          .payload = std::vector<uint8_t>{0x00}});
+        });
+    }
     break;
 
   case LPUyatCommandType::DATAPOINT_RECORDED_REPORT:
@@ -323,17 +300,19 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
 
     if (this->init_state_ == LPUyatInitState::INIT_DATAPOINT) {
       this->init_state_ = LPUyatInitState::INIT_DONE;
-      this->set_timeout("datapoint_dump", 1000,
-                        [this] { this->dump_config(); });
       this->initialized_callback_.call();
     }
     this->handle_datapoints_(buffer, len);
-    // delay the response to increase chances of publishing the values before mcu cuts the power
-    this->set_timeout("datapoint_ack", dp_ack_delay_ms_, [this] {
-        this->send_command_(
-            LPUyatCommand{.cmd = LPUyatCommandType::DATAPOINT_RECORDED_REPORT,
-                        .payload = std::vector<uint8_t>{0x00}});
-        });
+    // only ack if we actualy reported connecting to cloud already
+    // otherwise the mcu will treat this answer as "we are connected to cloud"
+    if (this->init_state_ > LPUyatInitState::INIT_WIFI)
+    {
+      this->set_timeout("datapoint_ack", dp_ack_delay_ms_, [this] {
+          this->send_command_(
+              LPUyatCommand{.cmd = LPUyatCommandType::DATAPOINT_RECORDED_REPORT,
+                          .payload = std::vector<uint8_t>{0x00}});
+          });
+    }
     break;
   }
   case LPUyatCommandType::WIFI_TEST:
@@ -584,11 +563,6 @@ void LPUyat::send_empty_command_(LPUyatCommandType command) {
   send_command_(LPUyatCommand{.cmd = command, .payload = std::vector<uint8_t>{}});
 }
 
-void LPUyat::set_status_pin_() {
-  bool is_network_ready = network::is_connected() && remote_is_connected();
-  this->status_pin_->digital_write(is_network_ready);
-}
-
 void LPUyat::send_wifi_status_(const uint8_t status) {
   ESP_LOGD(TAG, "Sending WiFi Status %d", status);
   this->send_command_(LPUyatCommand{.cmd = LPUyatCommandType::WIFI_STATUS,
@@ -805,11 +779,10 @@ void LPUyat::send_datapoint_command_(uint8_t datapoint_id,
 
 void LPUyat::register_listener(uint8_t datapoint_id,
                              const std::function<void(LPUyatDatapoint)> &func) {
-  auto listener = LPUyatDatapointListener{
+  this->listeners_.emplace_back(LPUyatDatapointListener{
       .datapoint_id = datapoint_id,
       .on_datapoint = func,
-  };
-  this->listeners_.push_back(listener);
+  });
 
   // Run through existing datapoints
   for (auto &datapoint : this->datapoints_) {

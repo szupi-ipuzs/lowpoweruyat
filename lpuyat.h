@@ -95,7 +95,6 @@ class LPUyat : public Component, public uart::UARTDevice {
   void set_raw_datapoint_value(uint8_t datapoint_id, const std::vector<uint8_t> &value);
   void set_boolean_datapoint_value(uint8_t datapoint_id, bool value);
   void set_integer_datapoint_value(uint8_t datapoint_id, uint32_t value);
-  void set_status_pin(InternalGPIOPin *status_pin) { this->status_pin_ = status_pin; }
   void set_string_datapoint_value(uint8_t datapoint_id, const std::string &value);
   void set_enum_datapoint_value(uint8_t datapoint_id, uint8_t value);
   void set_bitmask_datapoint_value(uint8_t datapoint_id, uint32_t value, uint8_t length);
@@ -117,6 +116,7 @@ class LPUyat : public Component, public uart::UARTDevice {
     this->initialized_callback_.add(std::move(callback));
   }
 
+  void set_pairing_delay(uint32_t delay_ms) { this->pairing_delay_ms_ = delay_ms; }
   void set_dp_ack_delay(uint32_t delay_ms) { this->dp_ack_delay_ms_ = delay_ms; }
 
  protected:
@@ -136,7 +136,6 @@ class LPUyat : public Component, public uart::UARTDevice {
   void set_string_datapoint_value_(uint8_t datapoint_id, const std::string &value, bool forced);
   void set_raw_datapoint_value_(uint8_t datapoint_id, const std::vector<uint8_t> &value, bool forced);
   void send_datapoint_command_(uint8_t datapoint_id, LPUyatDatapointType datapoint_type, std::vector<uint8_t> data);
-  void set_status_pin_();
   void send_wifi_status_(const uint8_t status);
   void query_product_info_with_retries_();
   void send_wifi_status_with_timeout_(const uint32_t timeout);
@@ -151,9 +150,6 @@ class LPUyat : public Component, public uart::UARTDevice {
   bool init_failed_{false};
   int init_retries_{0};
   uint8_t protocol_version_ = 0;  // always 0 for low-power
-  InternalGPIOPin *status_pin_{nullptr};
-  int status_pin_reported_ = -1;
-  int reset_pin_reported_ = -1;
   uint32_t last_command_timestamp_ = 0;
   uint32_t last_rx_char_timestamp_ = 0;
   std::string product_ = "";
@@ -165,7 +161,9 @@ class LPUyat : public Component, public uart::UARTDevice {
   optional<LPUyatCommandType> expected_response_{};
   CallbackManager<void()> initialized_callback_{};
   LPUyatNetworkStatus wifi_status_{LPUyatNetworkStatus::SMARTCONFIG};
+  uint32_t pairing_delay_ms_ = 30000;
   uint32_t dp_ack_delay_ms_ = 200;
+  uint32_t cloud_ack_delay_ms_ = 200;
 };
 
 }  // namespace lpuyat
