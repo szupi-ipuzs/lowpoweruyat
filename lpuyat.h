@@ -76,7 +76,6 @@ enum class LPUyatCommandType : uint8_t {
 enum class LPUyatInitState : uint8_t {
   INIT_PRODUCT,
   INIT_WIFI,
-  INIT_DATAPOINT,
   INIT_DONE,
 };
 
@@ -138,8 +137,9 @@ class LPUyat : public Component, public uart::UARTDevice {
   void send_datapoint_command_(uint8_t datapoint_id, LPUyatDatapointType datapoint_type, std::vector<uint8_t> data);
   void send_wifi_status_(const uint8_t status);
   void query_product_info_with_retries_();
-  void send_wifi_status_with_timeout_(const uint32_t timeout);
   void send_firmware_upgrade_state_(LPUyatCommandType command, uint8_t state);
+  void report_wifi_connected_or_retry_(const uint32_t delay_ms);
+  void report_cloud_connected_after_delay_(const uint32_t delay_ms);
 
 #ifdef USE_TIME
   void send_local_time_();
@@ -160,7 +160,8 @@ class LPUyat : public Component, public uart::UARTDevice {
   std::vector<LPUyatCommand> command_queue_;
   optional<LPUyatCommandType> expected_response_{};
   CallbackManager<void()> initialized_callback_{};
-  LPUyatNetworkStatus wifi_status_{LPUyatNetworkStatus::SMARTCONFIG};
+  LPUyatNetworkStatus wifi_status_{LPUyatNetworkStatus::WIFI_CONFIGURED};
+  optional<bool> requested_wifi_config_is_ap_{};
   uint32_t pairing_delay_ms_ = 30000;
   uint32_t dp_ack_delay_ms_ = 200;
   uint32_t cloud_ack_delay_ms_ = 200;

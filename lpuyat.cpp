@@ -16,6 +16,8 @@ static const uint64_t UART_MAX_POLL_TIME_MS = 50;
 
 void LPUyat::query_product_info_with_retries_()
 {
+  this->cancel_timeout("datapoint_ack");
+  this->cancel_timeout("wifi_status");
   this->cancel_timeout("product");
   if (this->init_state_ != LPUyatInitState::INIT_PRODUCT)
   {
@@ -181,8 +183,24 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
 
     if (this->init_state_ == LPUyatInitState::INIT_PRODUCT) {
       this->init_state_ = LPUyatInitState::INIT_WIFI;
-      this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONFIGURED;
-      this->send_wifi_status_with_timeout_(100);
+      if (this->requested_wifi_config_is_ap_.has_value())
+      {
+        if (this->requested_wifi_config_is_ap_.value())
+        {
+          this->wifi_status_ = LPUyatNetworkStatus::AP_MODE;
+        }
+        else
+        {
+          this->wifi_status_ = LPUyatNetworkStatus::SMARTCONFIG;
+        }
+      }
+      else
+      {
+        this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONFIGURED;
+      }
+      this->requested_wifi_config_is_ap_.reset();
+
+      this->send_wifi_status_(static_cast<uint8_t>(this->wifi_status_));
     }
     break;
   }
@@ -191,78 +209,52 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
       if ((this->wifi_status_ == LPUyatNetworkStatus::SMARTCONFIG) || (this->wifi_status_ == LPUyatNetworkStatus::AP_MODE))
       {
         this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONFIGURED;
-        this->send_wifi_status_with_timeout_(100);
+        this->send_wifi_status_(static_cast<uint8_t>(this->wifi_status_));
       }
       else if (this->wifi_status_ == LPUyatNetworkStatus::WIFI_CONFIGURED)
       {
-        this->set_interval("wifi_status", 100, [this] {
-          if (LPUyatInitState::INIT_WIFI == this->init_state_)
-          {
-            if (esphome::network::is_connected())
-            {
-              this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONNECTED;
-              this->send_wifi_status_(static_cast<uint8_t>(this->wifi_status_));
-              this->cancel_interval("wifi_status");
-            }
-          }
-          else
-          {
-            this->cancel_interval("wifi_status");
-          }
-        });
+        this->report_wifi_connected_or_retry_(100u);
       }
       else if (this->wifi_status_ == LPUyatNetworkStatus::WIFI_CONNECTED)
       {
-        ESP_LOGI(TAG, "Delaying %ums before reporting cloud connection...", this->cloud_ack_delay_ms_);
-        this->set_interval("wifi_status", this->cloud_ack_delay_ms_, [this] {
-          if (LPUyatInitState::INIT_WIFI == this->init_state_)
-          {
-            if (esphome::remote_is_connected())
-            {
-              this->wifi_status_ = LPUyatNetworkStatus::CLOUD_CONNECTED;
-              this->send_wifi_status_(static_cast<uint8_t>(this->wifi_status_));
-              this->cancel_interval("wifi_status");
-            }
-          }
-          else
-          {
-            this->cancel_interval("wifi_status");
-          }
-        });
+        if (this->cloud_ack_delay_ms_== 0u)
+        {
+          ESP_LOGI(TAG, "Cloud ack delay is 0ms, skipping reporting cloud connection");
+        }
+        else
+        {
+          this->report_cloud_connected_after_delay_(this->cloud_ack_delay_ms_);
+        }
       }
       else if (this->wifi_status_ == LPUyatNetworkStatus::CLOUD_CONNECTED)
       {
-        this->init_state_ = LPUyatInitState::INIT_DATAPOINT;
+        this->init_state_ = LPUyatInitState::INIT_DONE;
         this->initialized_callback_.call();
       }
     }
     break;
   case LPUyatCommandType::WIFI_RESET:
     ESP_LOGE(TAG, "WIFI_RESET");
-    this->send_empty_command_(LPUyatCommandType::WIFI_RESET);
-    this->init_state_ = LPUyatInitState::INIT_WIFI;
-    this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONFIGURED;
+    this->init_state_ = LPUyatInitState::INIT_PRODUCT;
     this->cloud_ack_delay_ms_ = this->pairing_delay_ms_;
-    this->send_wifi_status_with_timeout_(100);
+    this->send_empty_command_(LPUyatCommandType::WIFI_RESET);
+    this->query_product_info_with_retries_();
     break;
   case LPUyatCommandType::WIFI_SELECT:
     ESP_LOGE(TAG, "WIFI_SELECT");
-    this->send_empty_command_(LPUyatCommandType::WIFI_SELECT);
-    this->init_state_ = LPUyatInitState::INIT_WIFI;
-    this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONFIGURED;
-    this->cloud_ack_delay_ms_ = this->pairing_delay_ms_;
     if (len > 0)
     {
-      if (buffer[0] == 0x00)
-      {
-        this->wifi_status_ = LPUyatNetworkStatus::SMARTCONFIG;
-      }
-      else if (buffer[0] == 0x01)
-      {
-        this->wifi_status_ = LPUyatNetworkStatus::AP_MODE;
-      }
+      this->requested_wifi_config_is_ap_ = (buffer[0] == 0x01);
     }
-    this->send_wifi_status_with_timeout_(100);
+    else
+    {
+      this->requested_wifi_config_is_ap_ = 0x00;  // SMARTCONFIG
+    }
+
+    this->init_state_ = LPUyatInitState::INIT_PRODUCT;
+    this->cloud_ack_delay_ms_ = this->pairing_delay_ms_;
+    this->send_empty_command_(LPUyatCommandType::WIFI_SELECT);
+    this->query_product_info_with_retries_();
     break;
   case LPUyatCommandType::QUERY_SIGNAL_STRENGTH:
     this->send_command_(
@@ -270,15 +262,12 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
                     .payload = std::vector<uint8_t>{0x01, 100u}});  // fake RSSI for now
     break;
   case LPUyatCommandType::DATAPOINT_REALTIME_REPORT:
-    if (this->init_state_ == LPUyatInitState::INIT_DATAPOINT) {
-      this->init_state_ = LPUyatInitState::INIT_DONE;
-      this->initialized_callback_.call();
-    }
     this->handle_datapoints_(buffer, len);
     // only ack if we actualy reported connecting to cloud already
     // otherwise the mcu will treat this answer as "we are connected to cloud"
     if (this->init_state_ > LPUyatInitState::INIT_WIFI)
     {
+      this->cancel_timeout("datapoint_ack");
       this->set_timeout("datapoint_ack", dp_ack_delay_ms_, [this] {
           this->send_command_(
               LPUyatCommand{.cmd = LPUyatCommandType::DATAPOINT_REALTIME_REPORT,
@@ -298,16 +287,15 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
     buffer += 7;
     len -= 7;
 
-    if (this->init_state_ == LPUyatInitState::INIT_DATAPOINT) {
-      this->init_state_ = LPUyatInitState::INIT_DONE;
-      this->initialized_callback_.call();
-    }
     this->handle_datapoints_(buffer, len);
     // only ack if we actualy reported connecting to cloud already
     // otherwise the mcu will treat this answer as "we are connected to cloud"
     if (this->init_state_ > LPUyatInitState::INIT_WIFI)
     {
-      this->set_timeout("datapoint_ack", dp_ack_delay_ms_, [this] {
+      ESP_LOGI(TAG, "Delaying %ums before acking datapoints", this->dp_ack_delay_ms_);
+      this->cancel_timeout("datapoint_ack");
+      this->set_timeout("datapoint_ack", this->dp_ack_delay_ms_, [this] {
+          this->cancel_timeout("datapoint_ack");
           this->send_command_(
               LPUyatCommand{.cmd = LPUyatCommandType::DATAPOINT_RECORDED_REPORT,
                           .payload = std::vector<uint8_t>{0x00}});
@@ -344,8 +332,8 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
   case LPUyatCommandType::FIRMWARE_UPGRADE_MODULE:
   {
     this->send_firmware_upgrade_state_(LPUyatCommandType::FIRMWARE_UPGRADE_MODULE, 0x00); // means "(start to detect firmware upgrading) do not power off"
+    this->cancel_timeout("firmware_upgrade_module");
     this->set_timeout("firmware_upgrade_module", 100, [this] {
-        this->cancel_timeout("firmware_upgrade_module");
         this->send_firmware_upgrade_state_(LPUyatCommandType::FIRMWARE_UPGRADE_MODULE, 0x01); // means "(the latest firmware already) power off"
       });
     break;
@@ -353,8 +341,8 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
   case LPUyatCommandType::FIRMWARE_UPGRADE_MCU:
   {
     this->send_firmware_upgrade_state_(LPUyatCommandType::FIRMWARE_UPGRADE_MCU, 0x00); // means "(start to detect firmware upgrading) do not power off"
+    this->cancel_timeout("firmware_upgrade_mcu");
     this->set_timeout("firmware_upgrade_mcu", 100, [this] {
-        this->cancel_timeout("firmware_upgrade_mcu");
         this->send_firmware_upgrade_state_(LPUyatCommandType::FIRMWARE_UPGRADE_MCU, 0x01); // means "(the latest firmware already) power off"
       });
     break;
@@ -569,18 +557,6 @@ void LPUyat::send_wifi_status_(const uint8_t status) {
                                   .payload = std::vector<uint8_t>{status}});
 }
 
-void LPUyat::send_wifi_status_with_timeout_(const uint32_t timeout) {
-{
-  this->cancel_timeout("wifi_status");
-  if (LPUyatInitState::INIT_WIFI == this->init_state_)
-  {
-    this->set_timeout("wifi_status", timeout, [this] {
-          this->send_wifi_status_(static_cast<uint8_t>(this->wifi_status_));
-        });
-    }
-  }
-}
-
 void LPUyat::send_firmware_upgrade_state_(LPUyatCommandType command, uint8_t state) {
   this->send_command_(LPUyatCommand{.cmd = command,
                                   .payload = std::vector<uint8_t>{state}});
@@ -792,6 +768,43 @@ void LPUyat::register_listener(uint8_t datapoint_id,
 }
 
 LPUyatInitState LPUyat::get_init_state() { return this->init_state_; }
+
+
+void LPUyat::report_wifi_connected_or_retry_(const uint32_t delay_ms)
+{
+  if (esphome::network::is_connected())
+  {
+    this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONNECTED;
+    this->send_wifi_status_(static_cast<uint8_t>(this->wifi_status_));
+  }
+  else
+  {
+    ESP_LOGI(TAG, "WiFi not connected yet, will retry...");
+    this->set_timeout("wifi_status", delay_ms, [this, delay_ms] {
+      this->report_wifi_connected_or_retry_(delay_ms);
+    });
+  }
+}
+
+void LPUyat::report_cloud_connected_after_delay_(const uint32_t delay_ms)
+{
+  ESP_LOGI(TAG, "Delaying %ums before reporting cloud connection...", delay_ms);
+  this->set_timeout("wifi_status", delay_ms, [this, delay_ms] {
+    if (LPUyatInitState::INIT_WIFI == this->init_state_)
+    {
+      if (esphome::remote_is_connected())
+      {
+        this->wifi_status_ = LPUyatNetworkStatus::CLOUD_CONNECTED;
+        this->send_wifi_status_(static_cast<uint8_t>(this->wifi_status_));
+      }
+      else
+      {
+        ESP_LOGI(TAG, "Cloud not connected yet, will retry...");
+        this->report_cloud_connected_after_delay_(1000);
+      }
+    }
+  });
+}
 
 } // namespace lpuyat
 } // namespace esphome
