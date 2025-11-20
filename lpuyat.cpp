@@ -741,16 +741,17 @@ void LPUyat::set_string_datapoint_value_(uint8_t datapoint_id,
 void LPUyat::send_datapoint_command_(uint8_t datapoint_id,
                                    LPUyatDatapointType datapoint_type,
                                    std::vector<uint8_t> data) {
-  std::vector<uint8_t> buffer;
-  buffer.push_back(datapoint_id);
-  buffer.push_back(static_cast<uint8_t>(datapoint_type));
-  buffer.push_back(data.size() >> 8);
-  buffer.push_back(data.size() >> 0);
-  buffer.insert(buffer.end(), data.begin(), data.end());
+  LPUyatCommand cmd{LPUyatCommandType::SEND_MODULE_COMMAND,{}};
+  cmd.payload.reserve(1 + 1 + 2 + data.size());
+  cmd.payload.push_back(datapoint_id);
+  cmd.payload.push_back(static_cast<uint8_t>(datapoint_type));
+  cmd.payload.push_back(data.size() >> 8);
+  cmd.payload.push_back(data.size() >> 0);
+  cmd.payload.insert(cmd.payload.end(), data.begin(), data.end());
 
-  this->send_command_(LPUyatCommand{.cmd = LPUyatCommandType::SEND_MODULE_COMMAND,
-                                  .payload = buffer});
-  this->expected_response_ = LPUyatCommandType::SEND_MODULE_COMMAND;
+  this->send_command_(cmd);
+// don't wait for ack - some devices don't send it
+//  this->expected_response_ = LPUyatCommandType::SEND_MODULE_COMMAND;
 }
 
 void LPUyat::register_listener(uint8_t datapoint_id,
