@@ -211,7 +211,8 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
         this->wifi_status_ = LPUyatNetworkStatus::WIFI_CONFIGURED;
         this->send_wifi_status_(static_cast<uint8_t>(this->wifi_status_));
       }
-      else if (this->wifi_status_ == LPUyatNetworkStatus::WIFI_CONFIGURED)
+
+      if (this->wifi_status_ == LPUyatNetworkStatus::WIFI_CONFIGURED)
       {
         this->report_wifi_connected_or_retry_(100u);
       }
@@ -306,7 +307,7 @@ void LPUyat::handle_command_(uint8_t command, uint8_t version,
   case LPUyatCommandType::WIFI_TEST:
     this->send_command_(
         LPUyatCommand{.cmd = LPUyatCommandType::WIFI_TEST,
-                    .payload = std::vector<uint8_t>{0x00, 0x00}});
+                    .payload = std::vector<uint8_t>{0x01, 100u}});  // success, rssi=strongest signal
     break;
   case LPUyatCommandType::LOCAL_TIME_QUERY:
 #ifdef USE_TIME
